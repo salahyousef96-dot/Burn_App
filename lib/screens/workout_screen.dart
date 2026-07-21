@@ -3,21 +3,10 @@ import '../theme/app_text_styles.dart';
 import '../widgets/neon_card.dart';
 import '../theme/app_colors.dart';
 import 'dart:async';
-import 'package:shared_preferences/shared_preferences.dart';
+import '../data/workout_data.dart';
+import '../models/exercise_model.dart';
+import '../services/workout_storage_service.dart';
 
-class _ExerciseData {
-  final String title;
-  final String details;
-  final int totalSets;
-  int completedSets;
-
-  _ExerciseData({
-    required this.title,
-    required this.details,
-    required this.totalSets,
-    required this.completedSets,
-  });
-}
 
 class WorkoutScreen extends StatefulWidget {
   const WorkoutScreen({super.key});
@@ -49,38 +38,50 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
     return 234 + completedSets * 18;
   }
 
+  Future<void> saveWorkoutState() async {
+    await workoutStorageService.saveWorkoutState(
+      exercises: exercises,
+      elapsedSeconds: elapsedSeconds,
+    );
+  }
+
+  Future<void> loadWorkoutState() async {
+    final savedElapsedSeconds =
+    await workoutStorageService.loadWorkoutState(exercises);
+
+    if (!mounted) return;
+
+    setState(() {
+      elapsedSeconds = savedElapsedSeconds;
+    });
+  }
+
+  Future<void> resetWorkoutState() async {
+    await workoutStorageService.resetWorkoutState();
+
+    restTimer?.cancel();
+
+    if (!mounted) return;
+
+    setState(() {
+      elapsedSeconds = 0;
+      restSeconds = 45;
+
+      for (final exercise in exercises) {
+        exercise.reset();
+      }
+    });
+  }
+
   int get averageBpm {
     if (workoutFinished) return 118;
     if (isResting) return 126;
     return 144 + activeExerciseIndex * 3;
   }
 
-  final List<_ExerciseData> exercises = [
-    _ExerciseData(
-      title: 'Bench Press',
-      details: '80 kg · 90s rest',
-      totalSets: 4,
-      completedSets: 4,
-    ),
-    _ExerciseData(
-      title: 'Incline Dumbbell Press',
-      details: '30 kg × 2 · 60s rest',
-      totalSets: 4,
-      completedSets: 2,
-    ),
-    _ExerciseData(
-      title: 'Cable Fly',
-      details: '20 kg · 45s rest',
-      totalSets: 3,
-      completedSets: 0,
-    ),
-    _ExerciseData(
-      title: 'OHP Barbell',
-      details: '45 kg · 90s rest',
-      totalSets: 4,
-      completedSets: 0,
-    ),
-  ];
+  final WorkoutStorageService workoutStorageService = WorkoutStorageService();
+
+  late final List<ExerciseModel> exercises;
 
   int get activeExerciseIndex {
     final index = exercises.indexWhere(
@@ -104,64 +105,6 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
 
   bool get workoutFinished => completedSets == totalSets;
 
-  Future<void> saveWorkoutState() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    final completedSetsList = exercises
-        .map((exercise) => exercise.completedSets.toString())
-        .toList();
-
-    await prefs.setStringList(completedSetsKey, completedSetsList);
-    await prefs.setInt(elapsedSecondsKey, elapsedSeconds);
-  }
-
-  Future<void> loadWorkoutState() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    final savedCompletedSets = prefs.getStringList(completedSetsKey);
-    final savedElapsedSeconds = prefs.getInt(elapsedSecondsKey);
-
-    if (!mounted) return;
-
-    setState(() {
-      if (savedCompletedSets != null &&
-          savedCompletedSets.length == exercises.length) {
-        for (int i = 0; i < exercises.length; i++) {
-          final savedValue = int.tryParse(savedCompletedSets[i]);
-
-          if (savedValue != null) {
-            exercises[i].completedSets =
-                savedValue.clamp(0, exercises[i].totalSets).toInt();
-          }
-        }
-      }
-
-      if (savedElapsedSeconds != null) {
-        elapsedSeconds = savedElapsedSeconds;
-      }
-    });
-  }
-
-  Future<void> resetWorkoutState() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    await prefs.remove(completedSetsKey);
-    await prefs.remove(elapsedSecondsKey);
-
-    restTimer?.cancel();
-
-    if (!mounted) return;
-
-    setState(() {
-      elapsedSeconds = 0;
-
-      for (final exercise in exercises) {
-        exercise.completedSets = 0;
-      }
-
-      restSeconds = 45;
-    });
-  }
 
   void startRestTimer() {
     restTimer?.cancel();
@@ -222,6 +165,8 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
   @override
   void initState() {
     super.initState();
+
+    exercises = createDefaultWorkoutExercises();
 
     loadWorkoutState();
 
